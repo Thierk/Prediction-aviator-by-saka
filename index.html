@@ -130,18 +130,50 @@ fileInput.dispatchEvent(new Event('change',{bubbles:true}));
 
 function generateSHA256(input){return CryptoJS.SHA256(input).toString(CryptoJS.enc.Hex);}
 function analyzeExtractedValues(values){if(values.length===0)return{x4:0};const totalTours=values.length;x2Plus=values.filter(v=>v>=2).length;x4Plus=values.filter(v=>v>=4).length;return{x4:x2Plus>0?x4Plus/x2Plus:0,totalTours,x2Plus,x4Plus};}
-function predictX4(nonce,historyRatios,hash){const part1=parseInt(hash.substr(0,4),16);const part2=parseInt(hash.substr(4,4),16);let probability=historyRatios.x4;const variation=(part1%100)/300;probability=Math.min(0.99,Math.max(0.1,probability+variation));const multiplier=4+(part2%7);return{multiplier:multiplier,probability:probability,nonce:nonce,confidence:probability>0.8?"Élevée":"Moyenne"};}
-function generateX4Predictions(nonceStart,extractedValues,maxPredictions=4){
-const predictions=[];const historyRatios=analyzeExtractedValues(extractedValues);let attempts=0;
-while(predictions.length<maxPredictions && attempts<50){
-const randomGap=Math.floor(Math.random()*10)+1;
-const currentNonce=nonceStart+randomGap*Math.floor(Math.random()*5+1);
-const hash=generateSHA256(currentNonce+extractedValues.join(""));
-const pred=predictX4(currentNonce,historyRatios,hash);
-if(pred.probability>=0.7 && !predictions.some(p=>p.nonce===pred.nonce)){predictions.push(pred);}
-attempts++;
+function predictX4(nonce,historyRatios,hash){
+    const part1=parseInt(hash.substr(0,4),16);
+    const part2=parseInt(hash.substr(4,4),16);
+    let probability=historyRatios.x4;
+    const variation=(part1%100)/300;
+    probability=Math.min(0.99,Math.max(0.1,probability+variation));
+    const multiplier=4+(part2%7);
+    
+    // Calcul de la fiabilité basée sur la probabilité et la stabilité des données
+    let confidenceScore = probability * 100;
+    if (historyRatios.totalTours > 20) confidenceScore += 10;
+    if (historyRatios.x2Plus > 5) confidenceScore += 5;
+    
+    return{
+        multiplier: multiplier,
+        probability: probability,
+        nonce: nonce,
+        confidenceScore: confidenceScore,
+        confidence: confidenceScore > 85 ? "Très élevée" : 
+                   confidenceScore > 70 ? "Élevée" : "Moyenne"
+    };
 }
-return predictions;
+
+function generateX4Predictions(nonceStart,extractedValues,maxPredictions=2){
+    const predictions=[];const historyRatios=analyzeExtractedValues(extractedValues);
+    
+    // Générer plusieurs prédictions et ne garder que les plus fiables
+    let allPredictions = [];
+    for(let i=0; i<20; i++){
+        const randomGap=Math.floor(Math.random()*10)+1;
+        const currentNonce=nonceStart+randomGap*Math.floor(Math.random()*5+1);
+        const hash=generateSHA256(currentNonce+extractedValues.join(""));
+        const pred=predictX4(currentNonce,historyRatios,hash);
+        
+        // Filtrer les prédictions avec une probabilité minimale
+        if(pred.probability>=0.7 && !allPredictions.some(p=>p.nonce===pred.nonce)){
+            allPredictions.push(pred);
+        }
+    }
+    
+    // Trier par score de confiance et prendre les 2 meilleures
+    allPredictions.sort((a, b) => b.confidenceScore - a.confidenceScore);
+    
+    return allPredictions.slice(0, maxPredictions);
 }
 
 function displayPredictions(predictions,analysisData){
@@ -163,12 +195,12 @@ predictionGrid.appendChild(analysisElement);
 predictions.forEach((pred,index)=>{
 const predictionElement=document.createElement('div');
 predictionElement.className='prediction';
-predictionElement.innerHTML=`<div class="prediction-title">Prediction ${index+1}</div>
+predictionElement.innerHTML=`<div class="prediction-title">Prédiction ${index+1}</div>
 <div class="prediction-value">${pred.multiplier.toFixed(2)}X</div>
 <div class="nonce-info">Cash out conseillé: x2 / x4<br>Nonce: ${pred.nonce}</div>
 <div class="probability-text"><span>Fiabilité</span><span>${(pred.probability*100).toFixed(1)}%</span></div>
 <div class="probability-bar"><div class="probability-fill" style="width:${pred.probability*100}%"></div></div>
-<div class="confidence-badge"><i class="fas ${pred.confidence==='Élevée'?'fa-bolt':'fa-chart-line'}"></i> ${pred.confidence}</div>`;
+<div class="confidence-badge"><i class="fas ${pred.confidence==='Très élevée'?'fa-bolt':'fa-chart-line'}"></i> ${pred.confidence}</div>`;
 predictionGrid.appendChild(predictionElement);
 setTimeout(()=>{predictionElement.querySelector('.probability-fill').style.width=`${pred.probability*100}%`;},100);
 });
@@ -211,7 +243,7 @@ const nonce=parseInt(nonceInput.value);
 
 setTimeout(()=>{
 const analysisData=analyzeExtractedValues(extractedValues);
-const predictions=generateX4Predictions(nonce,extractedValues,4);
+const predictions=generateX4Predictions(nonce,extractedValues,2);
 lastInputHash=currentHash;
 lastPredictions=predictions;
 displayPredictions(predictions,analysisData);
